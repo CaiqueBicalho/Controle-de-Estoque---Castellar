@@ -224,7 +224,13 @@ function initApp() {
           setRole('gestor');
         } else {
           var res = await sb.from('user_roles').select('role').eq('user_id', u.id).maybeSingle();
-          setRole(res.data ? res.data.role : null);
+          if (!res.data) {
+            // Atribui papel inicial de 'visualizador' para que o usuário consiga logar
+            await sb.from('user_roles').insert({ user_id: u.id, role: 'visualizador' });
+            setRole('visualizador');
+          } else {
+            setRole(res.data.role);
+          }
         }
         var pRes = await sb.from('profiles').select('full_name').eq('user_id', u.id).maybeSingle();
         setProfileName(pRes.data ? pRes.data.full_name : u.email);
