@@ -195,8 +195,8 @@ function run() {
   var cc = R.createContext;
   var Frag = R.Fragment;
   var sb = window.supabase.createClient(
-    'https://kskmgyuocnsebwgdgeiu.supabase.co',
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtza21neXVvY25zZWJ3Z2RnZWl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzNjIwMzksImV4cCI6MjA4NjkzODAzOX0.Bzqpz3dPVoSaP2YA8pJimt5Jf73oxcll7-Y2Qc8ctp0'
+    'https://neoziqxduuyzzvuuifbc.supabase.co',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5lb3ppcXhkdXV5enp2dXVpZmJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1MzQ3NTgsImV4cCI6MjA4NzExMDc1OH0.ebmcWsWJPUaeZFx7KVUhp8svuDWl-Mt0Rf6txWtayi4'
   );
   var OWNER = 'bicalho.ca@gmail.com';
 
@@ -248,8 +248,9 @@ function run() {
       try {
         var isOwner = u.email && u.email.toLowerCase() === OWNER;
         if (isOwner) {
-          // Owner sempre gestor — upsert direto
-          await sb.from('user_roles').upsert({user_id:u.id,role:'gestor'},{onConflict:'user_id'});
+          // Owner sempre gestor — DELETE+INSERT para evitar conflito de constraint
+          await sb.from('user_roles').delete().eq('user_id',u.id);
+          await sb.from('user_roles').insert({user_id:u.id,role:'gestor'});
           setRole('gestor');
         } else {
           var {data:rd} = await sb.from('user_roles').select('role').eq('user_id',u.id).maybeSingle();
@@ -427,21 +428,31 @@ function run() {
       var n=parseInt(qty);
       if(!n||n<=0){toast('Quantidade inválida','err');return;}
       setBusy(true);
-      var ins = {type:mov.type,quantity:n,user_id:auth.user.id};
-      // If variation has product_id, use variation_id; else use product_id
-      if(mov.variation.product_id){
-        ins.product_id = mov.variation.product_id;
-        ins.variation_id = mov.variation.id !== mov.variation.product_id ? mov.variation.id : null;
-      } else {
-        ins.product_id = mov.variation.id;
+
+      // Determine product_id and variation_id
+      var isRealVariation = mov.variation.product_id && mov.variation.id !== mov.variation.product_id;
+      var prodId = isRealVariation ? mov.variation.product_id : mov.variation.id;
+      var varId  = isRealVariation ? mov.variation.id : null;
+
+      // Try inserting with variation_id first; if column missing, retry without it
+      var ins = {type:mov.type,quantity:n,user_id:auth.user.id,product_id:prodId};
+      if(varId) ins.variation_id = varId;
+
+      var res = await sb.from('stock_movements').insert(ins);
+
+      // If variation_id column doesn't exist yet, retry without it
+      if(res.error && res.error.message && res.error.message.indexOf('variation_id')>=0){
+        var ins2 = {type:mov.type,quantity:n,user_id:auth.user.id,product_id:prodId};
+        res = await sb.from('stock_movements').insert(ins2);
+        varId = null; // balance key will be product_id
       }
-      var {error} = await sb.from('stock_movements').insert(ins);
+
       setBusy(false);
-      if(error){toast('Erro: '+error.message,'err');return;}
+      if(res.error){toast('Erro: '+res.error.message,'err');return;}
       toast(mov.type==='entrada'?'✓ Entrada registrada!':'✓ Saída registrada!','ok');
       setMov(null);setQty('1');
-      // refresh balance
-      var key = ins.variation_id||ins.product_id;
+      // refresh balance locally
+      var key = varId||prodId;
       var nb = Object.assign({},bal);
       nb[key]=(nb[key]||0)+(mov.type==='entrada'?n:-n);
       setBal(nb);
@@ -508,6 +519,11 @@ function run() {
                             h('div',{className:'prod-stock-total',style:{color:total<=0?'var(--red)':'var(--text)'}},total),
                             h('div',{className:'prod-stock-label'},'total')
                           ),
+                          canEdit && h('button',{
+                            onClick:function(e){e.stopPropagation();goTo('edit-product-'+p.id);},
+                            style:{background:'none',border:'none',cursor:'pointer',color:'var(--text3)',padding:'4px',borderRadius:'6px',display:'flex',alignItems:'center'},
+                            title:'Editar produto'
+                          },h(Ic,{n:'edit',s:16})),
                           h(Ic,{n:'chev',s:18,c:'var(--text3)'})
                         )
                       ),
@@ -796,8 +812,9 @@ function run() {
       setCreating(true);
       var {data,error} = await sb.auth.signUp({email:nu.email,password:nu.password,options:{data:{full_name:nu.fullName}}});
       if(error||!data.user){toast(error?error.message:'Erro ao criar usuário','err');setCreating(false);return;}
-      // Use upsert to avoid conflicts
-      await sb.from('user_roles').upsert({user_id:data.user.id,role:nu.role},{onConflict:'user_id'});
+      // DELETE+INSERT para garantir que o papel é salvo corretamente
+      await sb.from('user_roles').delete().eq('user_id',data.user.id);
+      await sb.from('user_roles').insert({user_id:data.user.id,role:nu.role});
       toast('✓ Usuário criado!','ok');
       setShowC(false);setNu({email:'',password:'',fullName:'',role:'visualizador'});
       setCreating(false);loadUsers();
@@ -806,8 +823,10 @@ function run() {
     async function saveRole(){
       if(!eu) return;
       setSaving(true);
-      // upsert by user_id to ensure update always works
-      var {error} = await sb.from('user_roles').upsert({user_id:eu.user_id,role:er},{onConflict:'user_id'});
+      // DELETE + INSERT para evitar problema com constraint UNIQUE(user_id,role)
+      // Isso funciona independente de qual constraint existe na tabela
+      await sb.from('user_roles').delete().eq('user_id',eu.user_id);
+      var {error} = await sb.from('user_roles').insert({user_id:eu.user_id,role:er});
       setSaving(false);
       if(error){toast('Erro ao salvar: '+error.message,'err');return;}
       toast('✓ Papel atualizado!','ok');setEu(null);loadUsers();
@@ -911,6 +930,129 @@ function run() {
     );
   }
 
+  // ── EDIT PRODUCT ───────────────────────────────────────────────────
+  function EditProduct(props) {
+    var goTo = props.goTo;
+    var prodId = props.prodId;
+    var _f=us(null);var f=_f[0];var setF=_f[1];
+    var _vs=us([]);var vs=_vs[0];var setVs=_vs[1];
+    var _busy=us(false);var busy=_busy[0];var setBusy=_busy[1];
+    var _loading=us(true);var loading=_loading[0];var setLoading=_loading[1];
+    var _delV=us(null);var delV=_delV[0];var setDelV=_delV[1]; // variation to delete
+    var _delBusy=us(false);var delBusy=_delBusy[0];var setDelBusy=_delBusy[1];
+
+    ue(function(){
+      Promise.all([
+        sb.from('products').select('*').eq('id',prodId).single(),
+        sb.from('product_variations').select('*').eq('product_id',prodId).order('created_at'),
+      ]).then(function(results){
+        var prod = results[0].data;
+        var pvars = results[1].data||[];
+        if(prod) setF({name:prod.name,category:prod.category||'sofa',condition:prod.condition||'novo'});
+        setVs(pvars.map(function(v){return Object.assign({},v,{_dirty:false});}));
+        setLoading(false);
+      });
+    },[prodId]);
+
+    function setVar(i,k,v){setVs(vs.map(function(x,j){return j===i?Object.assign({},x,{[k]:v,_dirty:true}):x;}));}
+
+    async function saveProduct(e){
+      e.preventDefault();
+      if(!f.name){toast('Preencha o nome','err');return;}
+      setBusy(true);
+      // Save product
+      var {error:pe} = await sb.from('products').update({name:f.name,category:f.category,condition:f.condition}).eq('id',prodId);
+      if(pe){toast('Erro ao salvar produto: '+pe.message,'err');setBusy(false);return;}
+      // Save dirty variations
+      var saves = vs.filter(function(v){return v._dirty&&v.id;}).map(function(v){
+        return sb.from('product_variations').update({name:v.name,size:v.size||null,fabric:v.fabric||null}).eq('id',v.id);
+      });
+      // Insert new variations (no id)
+      var newVars = vs.filter(function(v){return !v.id&&v.name&&v.name.trim();}).map(function(v){
+        return {product_id:prodId,name:v.name.trim(),size:v.size||null,fabric:v.fabric||null};
+      });
+      if(newVars.length>0) saves.push(sb.from('product_variations').insert(newVars));
+      if(saves.length>0) await Promise.all(saves);
+      setBusy(false);
+      toast('✓ Produto atualizado!','ok');
+      goTo('products');
+    }
+
+    async function deleteVariation(){
+      if(!delV) return;
+      setDelBusy(true);
+      var {error} = await sb.from('product_variations').delete().eq('id',delV.id);
+      setDelBusy(false);
+      if(error){toast('Erro ao excluir: '+error.message,'err');setDelV(null);return;}
+      toast('✓ Variação excluída','ok');
+      setVs(vs.filter(function(v){return v.id!==delV.id;}));
+      setDelV(null);
+    }
+
+    function addVar(){setVs(vs.concat({name:'',size:'',fabric:'',_dirty:true}));}
+    function removeNewVar(i){setVs(vs.filter(function(_,j){return j!==i;}));}
+
+    if(loading||!f) return h('div',{className:'loading'},'Carregando...');
+
+    return h('div',{className:'ai'},
+      h('button',{className:'back-btn',onClick:function(){goTo('products');}},h(Ic,{n:'left',s:15}),' Voltar'),
+      h('div',{className:'card'},
+        h('div',{className:'cb'},
+          h('h2',{style:{fontFamily:'Fraunces,serif',fontSize:'1.25rem',fontWeight:700,marginBottom:'1.25rem'}},'Editar Produto'),
+          h('form',{onSubmit:saveProduct},
+            h('div',{className:'fg'},h('label',{className:'lbl'},'Nome do Produto *'),h('input',{className:'input',value:f.name,onChange:function(e){setF(Object.assign({},f,{name:e.target.value}));},required:true})),
+            h('div',{className:'fgrid'},
+              h('div',{className:'fg'},h('label',{className:'lbl'},'Categoria'),
+                h('select',{className:'sel',value:f.category,onChange:function(e){setF(Object.assign({},f,{category:e.target.value}));}},
+                  CATS.map(function(c){return h('option',{key:c.id,value:c.id},c.label.replace('s','').replace('ões','ão'));})
+                )
+              ),
+              h('div',{className:'fg'},h('label',{className:'lbl'},'Condição'),
+                h('select',{className:'sel',value:f.condition,onChange:function(e){setF(Object.assign({},f,{condition:e.target.value}));}},
+                  h('option',{value:'novo'},'Novo'),
+                  h('option',{value:'leves_defeitos'},'Leves Defeitos'),
+                  h('option',{value:'assistencia'},'Assistência')
+                )
+              )
+            ),
+            h('div',{className:'divider'}),
+            h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}},
+              h('p',{style:{fontWeight:600,fontSize:'.9rem'}},'Variações'),
+              h('button',{type:'button',className:'btn btn-o btn-sm',onClick:addVar,style:{display:'inline-flex',alignItems:'center',gap:6}},h(Ic,{n:'plus',s:12}),'Adicionar')
+            ),
+            h('div',{className:'sy2'},
+              vs.map(function(v,i){
+                return h('div',{key:v.id||('new-'+i),style:{background:'var(--bg)',borderRadius:'var(--rs)',padding:'12px',position:'relative'}},
+                  h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}},
+                    h('span',{style:{fontSize:'.78rem',fontWeight:600,color:'var(--text3)'}},'Variação '+(i+1)),
+                    v.id
+                      ? h('button',{type:'button',onClick:function(){setDelV(v);},style:{background:'none',border:'none',cursor:'pointer',color:'var(--red)',display:'inline-flex',alignItems:'center',gap:4,fontSize:'.78rem'}},h(Ic,{n:'trash',s:13}),'Excluir')
+                      : h('button',{type:'button',onClick:function(){removeNewVar(i);},style:{background:'none',border:'none',cursor:'pointer',color:'var(--text3)',display:'inline-flex',alignItems:'center',gap:4,fontSize:'.78rem'}},h(Ic,{n:'trash',s:13}),'Remover')
+                  ),
+                  h('div',{className:'fg'},h('label',{className:'lbl'},'Nome *'),h('input',{className:'input',value:v.name,onChange:function(e){setVar(i,'name',e.target.value);},placeholder:'Ex: 2 lugares, Azul, 1.80m...'})),
+                  h('div',{className:'fgrid'},
+                    h('div',{className:'fg'},h('label',{className:'lbl'},'Tamanho'),h('input',{className:'input',value:v.size||'',onChange:function(e){setVar(i,'size',e.target.value);},placeholder:'Ex: 2.20m'})),
+                    h('div',{className:'fg'},h('label',{className:'lbl'},'Tecido'),h('input',{className:'input',value:v.fabric||'',onChange:function(e){setVar(i,'fabric',e.target.value);},placeholder:'Ex: Linho'}))
+                  )
+                );
+              })
+            ),
+            h('div',{style:{marginTop:'1.25rem'}}),
+            h('button',{className:'btn btn-p btn-full',type:'submit',disabled:busy,style:{justifyContent:'center'}},busy?'Salvando...':'Salvar Alterações')
+          )
+        )
+      ),
+      // Confirm delete variation
+      h(Modal,{open:!!delV,onClose:function(){setDelV(null);},title:'Excluir Variação',
+        footer:h(Frag,null,
+          h('button',{className:'btn btn-o',onClick:function(){setDelV(null);}},'Cancelar'),
+          h('button',{className:'btn btn-danger',onClick:deleteVariation,disabled:delBusy},delBusy?'Excluindo...':'Excluir')
+        )},
+        h('p',{style:{fontSize:'.9rem'}},'Deseja excluir a variação ',h('strong',null,delV?delV.name:''),'? O histórico de movimentações será mantido.')
+      )
+    );
+  }
+
   // ── ROUTER ─────────────────────────────────────────────────────────
   function Router() {
     var auth = useAuth();
@@ -921,6 +1063,9 @@ function run() {
       if(p.startsWith('new-variation-')){
         setProdId(p.replace('new-variation-',''));
         setPage('new-variation');
+      } else if(p.startsWith('edit-product-')){
+        setProdId(p.replace('edit-product-',''));
+        setPage('edit-product');
       } else {
         setProdId(null);
         setPage(p);
@@ -936,12 +1081,11 @@ function run() {
 
     var content;
     if(page==='new-product'&&canEdit) content=h(NewProduct,{goTo:goTo});
+    else if(page==='edit-product'&&canEdit&&prodId) content=h(EditProduct,{goTo:goTo,prodId:prodId});
     else if(page==='new-variation'&&canEdit&&prodId) content=h(NewVariation,{goTo:goTo,prodId:prodId});
-    else if(page==='reports'&&auth.role!=='visualizador'&&false) content=h(Reports); // unreachable — visualizador CAN'T see reports
-    else if(page==='reports') {
-      // Only gestor and editor can see reports
+    else if(page==='reports'){
       if(auth.role==='gestor'||auth.role==='editor') content=h(Reports);
-      else { setPage('products'); content=h(Products,{goTo:goTo}); }
+      else content=h(Products,{goTo:goTo});
     }
     else if(page==='users'&&auth.role==='gestor') content=h(Users);
     else content=h(Products,{goTo:goTo});
