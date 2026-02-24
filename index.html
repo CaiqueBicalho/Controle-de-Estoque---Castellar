@@ -16,6 +16,7 @@
   <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@supabase/supabase-js@2.39.7/dist/umd/supabase.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     :root{
@@ -341,6 +342,9 @@ function run(){
     trash:'<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>',
     az:'<path d="M3 7h4"/><path d="M3 12h6"/><path d="M3 17h8"/><path d="M13 17h8"/><path d="M17 3l4 4-4 4"/>',
     filter:'<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
+    dashboard:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+    trending:'<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>',
+    award:'<circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/>',
   };
   function Ic(p){
     return h('svg',{xmlns:'http://www.w3.org/2000/svg',width:p.s||18,height:p.s||18,viewBox:'0 0 24 24',fill:'none',stroke:p.c||'currentColor',strokeWidth:'2',strokeLinecap:'round',strokeLinejoin:'round',style:{flexShrink:0,display:'inline-block',verticalAlign:'middle'},dangerouslySetInnerHTML:{__html:SVG[p.n]||''}});
@@ -937,6 +941,251 @@ function run(){
     );
   }
 
+
+  // ── DASHBOARD ──
+  function Dashboard(){
+    var _data=us(null);var data=_data[0];var setData=_data[1];
+    var _loading=us(true);var loading=_loading[0];var setLoading=_loading[1];
+    var barRef=R.useRef(null);var lineRef=R.useRef(null);var rankRef=R.useRef(null);
+    var barChart=R.useRef(null);var lineChart=R.useRef(null);var rankChart=R.useRef(null);
+
+    ue(function(){
+      loadData();
+    },[]);
+
+    function loadData(){
+      setLoading(true);
+      Promise.all([
+        sb.from('products').select('id,name,category'),
+        sb.from('product_variations').select('id,product_id'),
+        sb.from('stock_movements').select('id,type,quantity,created_at,product_id,variation_id').order('created_at',{ascending:true}),
+      ]).then(function(results){
+        var prods=results[0].data||[];
+        var vars=results[1].data||[];
+        var movs=results[2].data||[];
+        setData({prods,vars,movs});
+        setLoading(false);
+      });
+    }
+
+
+
+    ue(function(){
+      if(!data||loading||!window.Chart)return;
+      buildCharts();
+    },[data,loading]);
+
+    function buildCharts(){
+      var CATS_ORDER=['sofa','poltrona','recamier','puff','outro'];
+      var CATS_LABEL={sofa:'Sofás',poltrona:'Poltronas',recamier:'Recamiers',puff:'Puffs',outro:'Outros'};
+
+      // map product -> category
+      var prodCat={};
+      data.prods.forEach(function(p){prodCat[p.id]=p.category||'outro';});
+      // map variation -> product
+      var varProd={};
+      data.vars.forEach(function(v){varProd[v.id]=v.product_id;});
+
+      // ── Estoque por Categoria ──
+      var catStock={};
+      CATS_ORDER.forEach(function(c){catStock[c]=0;});
+      var bal={};
+      data.movs.forEach(function(m){
+        var key=m.variation_id||m.product_id;
+        bal[key]=(bal[key]||0)+(m.type==='entrada'?m.quantity:-m.quantity);
+      });
+      // sum bal per category
+      Object.keys(bal).forEach(function(key){
+        var pid=varProd[key]||key;
+        var cat=prodCat[pid]||'outro';
+        catStock[cat]=(catStock[cat]||0)+(bal[key]>0?bal[key]:0);
+      });
+      var catLabels=CATS_ORDER.map(function(c){return CATS_LABEL[c];});
+      var catVals=CATS_ORDER.map(function(c){return catStock[c]||0;});
+
+      // ── Movimentações por mês (últimos 6 meses) ──
+      var months=[];var entradas=[];var saidas=[];
+      var now=new Date();
+      for(var i=5;i>=0;i--){
+        var d=new Date(now.getFullYear(),now.getMonth()-i,1);
+        var key2=d.getFullYear()+'-'+(d.getMonth()+1<10?'0':'')+(d.getMonth()+1);
+        months.push(d.toLocaleString('pt-BR',{month:'short',year:'2-digit'}));
+        var ent=0,sai=0;
+        data.movs.forEach(function(m){
+          var mk=m.created_at.slice(0,7);
+          if(mk===key2){if(m.type==='entrada')ent+=m.quantity;else sai+=m.quantity;}
+        });
+        entradas.push(ent);saidas.push(sai);
+      }
+
+      // ── Top 10 produtos com mais saídas ──
+      var prodSaidas={};
+      data.movs.forEach(function(m){
+        if(m.type==='saida'){
+          var pid=m.variation_id?varProd[m.variation_id]:m.product_id;
+          if(pid)prodSaidas[pid]=(prodSaidas[pid]||0)+m.quantity;
+        }
+      });
+      var prodMap={};
+      data.prods.forEach(function(p){prodMap[p.id]=p.name;});
+      var ranked=Object.keys(prodSaidas).map(function(pid){
+        return{name:prodMap[pid]||'Produto',qty:prodSaidas[pid]};
+      }).sort(function(a,b){return b.qty-a.qty;}).slice(0,8);
+
+      var GOLD='rgba(184,150,46,1)';var GOLD_T='rgba(184,150,46,0.15)';
+      var GREEN='rgba(30,107,69,0.85)';var RED='rgba(184,50,50,0.85)';
+      var GRID='rgba(0,0,0,0.06)';
+
+      var chartDefaults={
+        plugins:{legend:{display:false}},
+        scales:{
+          x:{grid:{color:GRID},ticks:{font:{family:'Jost, sans-serif',size:11},color:'#8A7D60'}},
+          y:{grid:{color:GRID},ticks:{font:{family:'Jost, sans-serif',size:11},color:'#8A7D60'},beginAtZero:true}
+        }
+      };
+
+      // Bar chart - categoria
+      if(barChart.current){barChart.current.destroy();barChart.current=null;}
+      if(barRef.current){
+        barChart.current=new window.Chart(barRef.current,{
+          type:'bar',
+          data:{
+            labels:catLabels,
+            datasets:[{
+              label:'Peças em estoque',
+              data:catVals,
+              backgroundColor:GOLD_T,
+              borderColor:GOLD,
+              borderWidth:2,
+              borderRadius:6,
+            }]
+          },
+          options:Object.assign({},chartDefaults,{
+            plugins:{
+              legend:{display:false},
+              tooltip:{callbacks:{label:function(c){return ' '+c.parsed.y+' peças';}}}
+            }
+          })
+        });
+      }
+
+      // Line chart - movimentações
+      if(lineChart.current){lineChart.current.destroy();lineChart.current=null;}
+      if(lineRef.current){
+        lineChart.current=new window.Chart(lineRef.current,{
+          type:'line',
+          data:{
+            labels:months,
+            datasets:[
+              {label:'Entradas',data:entradas,borderColor:GREEN,backgroundColor:'rgba(30,107,69,0.1)',borderWidth:2,tension:0.4,fill:true,pointBackgroundColor:GREEN,pointRadius:4},
+              {label:'Saídas',data:saidas,borderColor:RED,backgroundColor:'rgba(184,50,50,0.08)',borderWidth:2,tension:0.4,fill:true,pointBackgroundColor:RED,pointRadius:4},
+            ]
+          },
+          options:Object.assign({},chartDefaults,{
+            plugins:{
+              legend:{display:true,position:'bottom',labels:{font:{family:'Jost, sans-serif',size:11},color:'#4A3F28',boxWidth:14,padding:16}},
+              tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+c.parsed.y;}}}
+            }
+          })
+        });
+      }
+
+      // Ranking - bar horizontal
+      if(rankChart.current){rankChart.current.destroy();rankChart.current=null;}
+      if(rankRef.current&&ranked.length>0){
+        rankChart.current=new window.Chart(rankRef.current,{
+          type:'bar',
+          data:{
+            labels:ranked.map(function(r){return r.name.length>20?r.name.slice(0,20)+'…':r.name;}),
+            datasets:[{
+              label:'Saídas',
+              data:ranked.map(function(r){return r.qty;}),
+              backgroundColor:ranked.map(function(_,i){return i===0?'rgba(184,150,46,0.9)':'rgba(184,150,46,0.35)';}),
+              borderColor:GOLD,
+              borderWidth:1.5,
+              borderRadius:5,
+            }]
+          },
+          options:{
+            indexAxis:'y',
+            plugins:{
+              legend:{display:false},
+              tooltip:{callbacks:{label:function(c){return ' '+c.parsed.x+' saídas';}}}
+            },
+            scales:{
+              x:{grid:{color:GRID},ticks:{font:{family:'Jost, sans-serif',size:11},color:'#8A7D60'},beginAtZero:true},
+              y:{grid:{display:false},ticks:{font:{family:'Jost, sans-serif',size:11},color:'#4A3F28'}}
+            }
+          }
+        });
+      }
+    }
+
+    // Summary stats
+    var totalEnt=0,totalSai=0,totalItens=0;
+    if(data){
+      data.movs.forEach(function(m){if(m.type==='entrada')totalEnt+=m.quantity;else totalSai+=m.quantity;});
+      // balance total
+      var bbal={};
+      data.movs.forEach(function(m){var k=m.variation_id||m.product_id;bbal[k]=(bbal[k]||0)+(m.type==='entrada'?m.quantity:-m.quantity);});
+      Object.values(bbal).forEach(function(v){if(v>0)totalItens+=v;});
+    }
+
+    function SCard(props){
+      return h('div',{className:'card',style:{flex:1,minWidth:140}},
+        h('div',{className:'stat-card'},
+          h('div',{className:'stat-icon',style:{background:props.bg,color:props.color}},h(Ic,{n:props.icon,s:20})),
+          h('div',null,
+            h('div',{className:'stat-lbl'},props.label),
+            h('div',{className:'stat-val',style:{color:props.color,fontSize:'1.6rem'}},props.value)
+          )
+        )
+      );
+    }
+
+    if(loading)return h('div',{className:'loading'},'Carregando dashboard...');
+
+    return h('div',{className:'ai'},
+      h('h1',{className:'pt',style:{marginBottom:'1rem'}},'Dashboard'),
+      // KPIs
+      h('div',{style:{display:'flex',gap:10,marginBottom:12,flexWrap:'wrap'}},
+        h(SCard,{label:'Total em Estoque',value:totalItens,icon:'box',bg:'rgba(184,150,46,.1)',color:'var(--gold)'}),
+        h(SCard,{label:'Total Entradas',value:totalEnt,icon:'arrowdown',bg:'rgba(30,107,69,.1)',color:'var(--green)'}),
+        h(SCard,{label:'Total Saídas',value:totalSai,icon:'arrowup',bg:'rgba(184,50,50,.1)',color:'var(--red)'}),
+        h(SCard,{label:'Produtos',value:data?data.prods.length:0,icon:'dashboard',bg:'rgba(184,150,46,.08)',color:'var(--text2)'})
+      ),
+      // Row 1: Estoque por Categoria
+      h('div',{className:'card',style:{marginBottom:12}},
+        h('div',{className:'cb'},
+          h('h3',{style:{fontFamily:"'Cormorant Garamond',serif",fontSize:'1.05rem',fontWeight:700,marginBottom:'0.875rem',color:'var(--text2)'}},'Estoque por Categoria'),
+          h('div',{style:{position:'relative',height:220}},
+            h('canvas',{ref:barRef,style:{width:'100%',height:'100%'}})
+          )
+        )
+      ),
+      // Row 2: Movimentações no Tempo
+      h('div',{className:'card',style:{marginBottom:12}},
+        h('div',{className:'cb'},
+          h('h3',{style:{fontFamily:"'Cormorant Garamond',serif",fontSize:'1.05rem',fontWeight:700,marginBottom:'0.875rem',color:'var(--text2)'}},'Movimentações nos Últimos 6 Meses'),
+          h('div',{style:{position:'relative',height:220}},
+            h('canvas',{ref:lineRef,style:{width:'100%',height:'100%'}})
+          )
+        )
+      ),
+      // Row 3: Ranking
+      data&&data.movs.some(function(m){return m.type==='saida';})
+        ?h('div',{className:'card',style:{marginBottom:12}},
+            h('div',{className:'cb'},
+              h('h3',{style:{fontFamily:"'Cormorant Garamond',serif",fontSize:'1.05rem',fontWeight:700,marginBottom:'0.875rem',color:'var(--text2)'}},'Top Produtos com Mais Saídas'),
+              h('div',{style:{position:'relative',height:280}},
+                h('canvas',{ref:rankRef,style:{width:'100%',height:'100%'}})
+              )
+            )
+          )
+        :h('div',{className:'card card-dash'},h('div',{className:'empty'},h('div',{className:'empty-icon'},h(Ic,{n:'award',s:24,c:'var(--gold)'})),h('p',{style:{fontFamily:"'Cormorant Garamond',serif",fontSize:'1.05rem',fontWeight:600}},'Nenhuma saída registrada ainda')))
+    );
+  }
+
   // ── REPORTS ──
   function Reports(){
     var _movs=us([]);var movs=_movs[0];var setMovs=_movs[1];
@@ -1097,7 +1346,7 @@ function run(){
     var nav=[
       {id:'produtos',label:'Produtos',icon:'box'},
       {id:'estoque',label:'Estoque',icon:'warehouse'},
-      ...(canEdit?[{id:'relatorios',label:'Relatórios',icon:'chart'}]:[]),
+      ...(canEdit?[{id:'dashboard',label:'Dashboard',icon:'dashboard'},{id:'relatorios',label:'Relatórios',icon:'chart'}]:[]),
       ...(auth.role==='gestor'?[{id:'usuarios',label:'Usuários',icon:'users'}]:[]),
     ];
     return h('div',{className:'shell'},
@@ -1157,6 +1406,7 @@ function run(){
     else if(page==='edit-product'&&canEdit&&pid)content=h(EditProduct,{goTo:goTo,prodId:pid});
     else if(page==='new-variation'&&canEdit&&pid)content=h(NewVariation,{goTo:goTo,prodId:pid});
     else if(page==='estoque')content=h(EstoquePage);
+    else if(page==='dashboard'&&canEdit)content=h(Dashboard);
     else if(page==='relatorios'&&canEdit)content=h(Reports);
     else if(page==='usuarios'&&auth.role==='gestor')content=h(Users);
     else content=h(ProdutosPage,{goTo:goTo});
