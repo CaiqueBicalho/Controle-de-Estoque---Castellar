@@ -539,12 +539,29 @@ function run(){
     var goTo=props.goTo;
     var auth=useAuth();
     var canEdit=auth.role==='gestor'||auth.role==='editor';
+    var isGestor=auth.role==='gestor';
     var data=useProductData();
     var _open=us({});var open=_open[0];var setOpen=_open[1];
     var _sort=us('az');var sort=_sort[0];var setSort=_sort[1];
     var _mov=us(null);var mov=_mov[0];var setMov=_mov[1];
     var _qty=us('1');var qty=_qty[0];var setQty=_qty[1];
     var _busy=us(false);var busy=_busy[0];var setBusy=_busy[1];
+    var _delProd=us(null);var delProd=_delProd[0];var setDelProd=_delProd[1];
+    var _delBusy=us(false);var delBusy=_delBusy[0];var setDelBusy=_delBusy[1];
+
+    async function deleteProduct(){
+      if(!delProd)return;
+      setDelBusy(true);
+      // Delete variations first, then movements, then product
+      await sb.from('stock_movements').delete().eq('product_id',delProd.id);
+      await sb.from('product_variations').delete().eq('product_id',delProd.id);
+      var{error}=await sb.from('products').delete().eq('id',delProd.id);
+      setDelBusy(false);
+      if(error){toast('Erro ao excluir: '+error.message,'err');setDelProd(null);return;}
+      toast('✓ Produto excluído','ok');
+      setDelProd(null);
+      data.load();
+    }
 
     async function doMov(){
       var n=parseInt(qty);if(!n||n<=0){toast('Quantidade inválida','err');return;}
@@ -602,6 +619,7 @@ function run(){
                       h('div',{className:'prod-total-lbl'},'total')
                     ),
                     canEdit&&h('button',{onClick:function(e){e.stopPropagation();goTo('edit-product-'+p.id);},style:{background:'none',border:'none',cursor:'pointer',color:'var(--text3)',padding:'5px',borderRadius:'6px',display:'flex',alignItems:'center',transition:'color .15s'},onMouseEnter:function(e){e.currentTarget.style.color='var(--gold)';},onMouseLeave:function(e){e.currentTarget.style.color='var(--text3)';},title:'Editar'},h(Ic,{n:'edit',s:14})),
+                    isGestor&&h('button',{onClick:function(e){e.stopPropagation();setDelProd(p);},style:{background:'none',border:'none',cursor:'pointer',color:'var(--text3)',padding:'5px',borderRadius:'6px',display:'flex',alignItems:'center',transition:'color .15s'},onMouseEnter:function(e){e.currentTarget.style.color='var(--red)';},onMouseLeave:function(e){e.currentTarget.style.color='var(--text3)';},title:'Excluir produto'},h(Ic,{n:'trash',s:14})),
                     h('span',{className:'chev'+(isOpen?' open':'')},h(Ic,{n:'chev',s:16}))
                   )
                 ),
@@ -643,6 +661,14 @@ function run(){
         h('p',{style:{fontSize:'.875rem',marginBottom:8,color:'var(--text2)'}},'Produto: ',h('strong',null,mov&&mov.v?mov.v.name:'')),
         h('label',{className:'lbl'},'Quantidade'),
         h('input',{className:'input',type:'number',min:1,value:qty,onChange:function(e){setQty(e.target.value);},autoFocus:true})
+      ),
+      h(Modal,{open:!!delProd,onClose:function(){setDelProd(null);},title:'Excluir Produto',
+        footer:h(Frag,null,
+          h('button',{className:'btn btn-o',onClick:function(){setDelProd(null);},disabled:delBusy},'Cancelar'),
+          h('button',{className:'btn btn-danger',onClick:deleteProduct,disabled:delBusy},delBusy?'Excluindo...':'Excluir')
+        )},
+        h('p',{style:{fontSize:'.9rem',marginBottom:6}},'Excluir o produto ',h('strong',null,delProd?delProd.name:''),'?'),
+        h('p',{style:{fontSize:'.82rem',color:'var(--text3)',lineHeight:1.5}},'Todas as variações e o histórico de movimentações deste produto serão excluídos permanentemente. Esta ação não pode ser desfeita.')
       )
     );
   }
@@ -1086,7 +1112,6 @@ function run(){
       ),
       h('div',{className:'body-wrap'},
         h('aside',{className:'sidebar'},
-          h('img',{src:LOGO_SRC,className:'sb-logo',alt:'Castellar'}),
           nav.map(function(item){
             return h('button',{key:item.id,className:'sb'+(page===item.id?' on':''),onClick:function(){goTo(item.id);}},h(Ic,{n:item.icon,s:16}),item.label);
           }),
