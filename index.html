@@ -147,11 +147,25 @@
     .cb{padding:1.125rem 1.25rem}
 
     /* ── CATEGORY ── */
-    .cat-hd{display:flex;align-items:center;gap:10px;padding:.375rem 0 .25rem;margin-top:1rem}
+    .cat-hd{display:flex;align-items:center;gap:10px;padding:.5rem .75rem .375rem;margin-top:.875rem;cursor:pointer;border-radius:var(--rs);transition:background .15s;user-select:none}
+    .cat-hd:hover{background:var(--bg2)}
     .cat-hd:first-child{margin-top:0}
     .cat-title{font-family:'Cormorant Garamond',serif;font-size:1.05rem;font-weight:600;color:var(--text2);white-space:nowrap;letter-spacing:.02em}
     .cat-pill{font-size:.65rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);background:var(--gold-bg);border:1px solid var(--gold-border);padding:2px 8px;border-radius:100px;white-space:nowrap}
     .cat-line{flex:1;height:1px;background:linear-gradient(90deg,var(--border2),transparent)}
+    .cat-chev{transition:transform .22s;flex-shrink:0;color:var(--text3)}
+    .cat-chev.open{transform:rotate(180deg)}
+    .cat-body{overflow:hidden;transition:max-height .28s ease,opacity .22s ease;max-height:9999px;opacity:1}
+    .cat-body.collapsed{max-height:0;opacity:0;pointer-events:none}
+
+    /* Reports filter panel */
+    .rpt-filter{background:var(--card);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh);margin-bottom:12px;overflow:hidden}
+    .rpt-filter-hd{display:flex;align-items:center;justify-content:space-between;padding:.875rem 1.125rem;cursor:pointer;user-select:none;gap:8px}
+    .rpt-filter-hd:hover{background:var(--bg2)}
+    .rpt-filter-title{font-size:.8rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--text2);display:flex;align-items:center;gap:7px}
+    .rpt-filter-body{padding:0 1.125rem 1rem;display:flex;flex-direction:column;gap:10px}
+    .rpt-filter-body.collapsed{display:none}
+    .cat-chips{display:flex;flex-wrap:wrap;gap:6px}
 
     /* ── PRODUCT CARDS ── */
     .prod-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden;margin-bottom:6px;transition:box-shadow .2s}
@@ -553,6 +567,8 @@ function run(){
     var _busy=us(false);var busy=_busy[0];var setBusy=_busy[1];
     var _delProd=us(null);var delProd=_delProd[0];var setDelProd=_delProd[1];
     var _delBusy=us(false);var delBusy=_delBusy[0];var setDelBusy=_delBusy[1];
+    var _collCat=us({});var collCat=_collCat[0];var setCollCat=_collCat[1];
+    function toggleCat(id){var nb=Object.assign({},collCat);nb[id]=!nb[id];setCollCat(nb);}
 
     async function deleteProduct(){
       if(!delProd)return;
@@ -601,12 +617,15 @@ function run(){
         ?h('div',{className:'card card-dash'},h('div',{className:'empty'},h('div',{className:'empty-icon'},h(Ic,{n:'box',s:24,c:'var(--gold)'})),h('p',{style:{fontFamily:"'Cormorant Garamond',serif",fontSize:'1.1rem',fontWeight:600}},'Nenhum produto cadastrado'),canEdit&&h('button',{className:'btn btn-o btn-sm',style:{marginTop:4},onClick:function(){goTo('new-product');}},'Cadastrar primeiro produto')))
         :sections.map(function(cat){
           var catProds=bycat[cat.id];
+          var isCatCollapsed=!!collCat[cat.id];
           return h('div',{key:cat.id},
-            h('div',{className:'cat-hd'},
+            h('div',{className:'cat-hd',onClick:function(){toggleCat(cat.id);}},
               h('span',{className:'cat-title'},cat.label),
               h('span',{className:'cat-pill'},catProds.length+' produto'+(catProds.length!==1?'s':'')),
-              h('div',{className:'cat-line'})
+              h('div',{className:'cat-line'}),
+              h('span',{className:'cat-chev'+(isCatCollapsed?'':' open')},h(Ic,{n:'chev',s:15}))
             ),
+            h('div',{className:'cat-body'+(isCatCollapsed?' collapsed':'')},
             catProds.map(function(p){
               var pvars=data.vars[p.id]||[];
               var total=data.getProdTotal(p.id);
@@ -654,7 +673,8 @@ function run(){
                   )
                 )
               );
-            })
+            }) // end catProds.map
+            ) // end cat-body div
           );
         }),
       h(Modal,{open:!!mov,onClose:function(){setMov(null);setQty('1');},
@@ -684,6 +704,8 @@ function run(){
     var canEdit=auth.role==='gestor'||auth.role==='editor';
     var data=useProductData();
     var _sort=us('az');var sort=_sort[0];var setSort=_sort[1];
+    var _collCat=us({});var collCat=_collCat[0];var setCollCat=_collCat[1];
+    function toggleCat(id){var nb=Object.assign({},collCat);nb[id]=!nb[id];setCollCat(nb);}
     var _mov=us(null);var mov=_mov[0];var setMov=_mov[1];
     var _qty=us('1');var qty=_qty[0];var setQty=_qty[1];
     var _busy=us(false);var busy=_busy[0];var setBusy=_busy[1];
@@ -736,12 +758,15 @@ function run(){
         :sections.map(function(cat){
           var catRows=bycat[cat.id];
           var catTotal=catRows.reduce(function(s,r){return s+r.stock;},0);
+          var isCatCollapsed=!!collCat[cat.id];
           return h('div',{key:cat.id},
-            h('div',{className:'cat-hd'},
+            h('div',{className:'cat-hd',onClick:function(){toggleCat(cat.id);}},
               h('span',{className:'cat-title'},cat.label),
               h('span',{className:'cat-pill'},catTotal+' itens'),
-              h('div',{className:'cat-line'})
+              h('div',{className:'cat-line'}),
+              h('span',{className:'cat-chev'+(isCatCollapsed?'':' open')},h(Ic,{n:'chev',s:15}))
             ),
+            h('div',{className:'cat-body'+(isCatCollapsed?' collapsed':'')},
             catRows.map(function(row){
               return h('div',{key:row.id,className:'stock-card'},
                 h('div',{className:'stock-info'},
@@ -756,7 +781,8 @@ function run(){
                   )
                 )
               );
-            })
+            }) // end catRows.map
+            ) // end cat-body div
           );
         }),
       h(Modal,{open:!!mov,onClose:function(){setMov(null);setQty('1');},
@@ -1192,6 +1218,9 @@ function run(){
     var _loading=us(true);var loading=_loading[0];var setLoading=_loading[1];
     var _from=us('');var from=_from[0];var setFrom=_from[1];
     var _to=us('');var to=_to[0];var setTo=_to[1];
+    var _selCat=us('');var selCat=_selCat[0];var setSelCat=_selCat[1]; // '' = todas
+    var _filterOpen=us(false);var filterOpen=_filterOpen[0];var setFilterOpen=_filterOpen[1];
+
     async function load(){
       setLoading(true);
       var q=sb.from('stock_movements').select('id,type,quantity,created_at,product_id,variation_id,user_id').order('created_at',{ascending:false});
@@ -1216,17 +1245,61 @@ function run(){
       }));setLoading(false);
     }
     ue(function(){load();},[from,to]);
-    var ent=movs.filter(function(m){return m.type==='entrada';}).reduce(function(s,m){return s+m.quantity;},0);
-    var sai=movs.filter(function(m){return m.type==='saida';}).reduce(function(s,m){return s+m.quantity;},0);
+
+    // Filter by category (client-side)
+    var filtered=selCat?movs.filter(function(m){return m.pcat===selCat;}):movs;
+    var ent=filtered.filter(function(m){return m.type==='entrada';}).reduce(function(s,m){return s+m.quantity;},0);
+    var sai=filtered.filter(function(m){return m.type==='saida';}).reduce(function(s,m){return s+m.quantity;},0);
     function fmt(iso){var d=new Date(iso);return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'})+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
+
+    // Count active filters
+    var activeFilters=(from?1:0)+(to?1:0)+(selCat?1:0);
+
     return h('div',{className:'ai'},
       h('h1',{className:'pt',style:{marginBottom:'1rem'}},'Relatórios'),
-      h('div',{className:'card',style:{marginBottom:12}},h('div',{className:'cb'},
-        h('div',{className:'fgrid'},
-          h('div',null,h('label',{className:'lbl'},'Data Início'),h('input',{className:'input',type:'date',value:from,onChange:function(e){setFrom(e.target.value);}})),
-          h('div',null,h('label',{className:'lbl'},'Data Fim'),h('input',{className:'input',type:'date',value:to,onChange:function(e){setTo(e.target.value);}}))
+
+      // ── Collapsible filter panel ──
+      h('div',{className:'rpt-filter'},
+        h('div',{className:'rpt-filter-hd',onClick:function(){setFilterOpen(!filterOpen);}},
+          h('div',{className:'rpt-filter-title'},
+            h(Ic,{n:'filter',s:14,c:'var(--gold)'}),
+            'Filtros',
+            activeFilters>0&&h('span',{className:'badge b-gold',style:{fontSize:'.62rem',padding:'1px 7px'}},activeFilters+' ativo'+(activeFilters!==1?'s':''))
+          ),
+          h('div',{style:{display:'flex',alignItems:'center',gap:8}},
+            activeFilters>0&&h('button',{
+              onClick:function(e){e.stopPropagation();setFrom('');setTo('');setSelCat('');},
+              style:{background:'none',border:'none',cursor:'pointer',color:'var(--text3)',fontSize:'.72rem',fontFamily:"'Jost',sans-serif",fontWeight:600,letterSpacing:'.05em',textTransform:'uppercase',display:'inline-flex',alignItems:'center',gap:4}
+            },h(Ic,{n:'refresh',s:11}),'Limpar'),
+            h('span',{className:'cat-chev'+(filterOpen?' open':'')},h(Ic,{n:'chev',s:15}))
+          )
+        ),
+        h('div',{className:'rpt-filter-body'+(filterOpen?'':' collapsed')},
+          // Date row
+          h('div',{className:'fgrid'},
+            h('div',null,h('label',{className:'lbl'},'Data Início'),h('input',{className:'input',type:'date',value:from,onChange:function(e){setFrom(e.target.value);}})),
+            h('div',null,h('label',{className:'lbl'},'Data Fim'),h('input',{className:'input',type:'date',value:to,onChange:function(e){setTo(e.target.value);}}))
+          ),
+          // Category chips
+          h('div',null,
+            h('label',{className:'lbl',style:{marginBottom:6}},'Categoria'),
+            h('div',{className:'cat-chips'},
+              h('button',{
+                className:'filter-btn'+(selCat===''?' active':''),
+                onClick:function(){setSelCat('');}
+              },'Todas'),
+              CATS.map(function(c){
+                return h('button',{
+                  key:c.id,
+                  className:'filter-btn'+(selCat===c.id?' active':''),
+                  onClick:function(){setSelCat(selCat===c.id?'':c.id);}
+                },c.label);
+              })
+            )
+          )
         )
-      )),
+      ),
+
       h('div',{className:'stat-grid'},
         h('div',{className:'card'},h('div',{className:'stat-card'},
           h('div',{className:'stat-icon',style:{background:'rgba(30,107,69,.1)',color:'var(--green)'}},h(Ic,{n:'arrowdown',s:20})),
@@ -1238,9 +1311,9 @@ function run(){
         ))
       ),
       loading?h('div',{className:'loading'},'Carregando...')
-      :movs.length===0?h('div',{className:'card card-dash'},h('div',{className:'empty'},h('div',{className:'empty-icon'},h(Ic,{n:'chart',s:24,c:'var(--gold)'})),h('p',{style:{fontFamily:"'Cormorant Garamond',serif",fontSize:'1.1rem',fontWeight:600}},'Nenhuma movimentação')))
+      :filtered.length===0?h('div',{className:'card card-dash'},h('div',{className:'empty'},h('div',{className:'empty-icon'},h(Ic,{n:'chart',s:24,c:'var(--gold)'})),h('p',{style:{fontFamily:"'Cormorant Garamond',serif",fontSize:'1.1rem',fontWeight:600}},selCat?'Nenhuma movimentação nesta categoria':'Nenhuma movimentação')))
       :h('div',{className:'card'},
-        movs.map(function(m){
+        filtered.map(function(m){
           return h('div',{key:m.id,className:'mov-row'},
             h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}},
               h('div',{style:{flex:1,minWidth:0}},
